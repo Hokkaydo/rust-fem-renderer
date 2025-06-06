@@ -1,4 +1,4 @@
-use std::{cmp::min, fmt::Display};
+use std::{cmp::min, fmt::Display, ops::Mul};
 use crate::glfem::color_maps;
 use cgmath::num_traits::Float;
 use glyphon::Color;
@@ -19,7 +19,7 @@ pub struct MeshRenderer {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ColorMap {
-    RAINBOW,
+    JET,
     MAGMA,
     TURBO,
     VIRIDIS,
@@ -31,7 +31,7 @@ pub enum ColorMap {
 impl Display for ColorMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ColorMap::RAINBOW => write!(f, "Jet"),
+            ColorMap::JET => write!(f, "Jet"),
             ColorMap::MAGMA => write!(f, "Magma"),
             ColorMap::TURBO => write!(f, "Turbo"),
             ColorMap::VIRIDIS => write!(f, "Viridis"),
@@ -45,7 +45,7 @@ impl Display for ColorMap {
 impl ColorMap {
     pub fn color(&self, value: f32) -> [f32; 3] {
         match self {
-            ColorMap::RAINBOW => Self::rainbow(value),
+            ColorMap::JET => Self::jet(value),
             ColorMap::MAGMA => Self::map(value, MAGMA_DATA),
             ColorMap::TURBO => Self::map(value, TURBO_DATA),
             ColorMap::VIRIDIS => Self::map(value, VIRIDIS_DATA),
@@ -57,7 +57,7 @@ impl ColorMap {
 
     pub fn list() -> Vec<ColorMap> {
         vec![
-            ColorMap::RAINBOW,
+            ColorMap::JET,
             ColorMap::MAGMA,
             ColorMap::TURBO,
             ColorMap::VIRIDIS,
@@ -68,7 +68,7 @@ impl ColorMap {
     }
 
     pub fn default() -> Self {
-        ColorMap::RAINBOW
+        ColorMap::JET
     }
 
     fn map(value: f32, data: [[f32; 3]; 256]) -> [f32; 3] {
@@ -79,31 +79,34 @@ impl ColorMap {
     }
 
     fn coolwarm(v: f32) -> [f32; 3] {
-        let r= 0.0.max(2.0*v - 1.0);
-        let g = 1.0 - 2.0*(v - 0.5).abs();
-        let b = 0.0.max(1.0 - 2.0*v);
-        [r, g, b]
+        if v <= 0.5 {
+            let t = v * 2.0;
+            [t, t, 1.0]
+        } else {
+            let t = (v - 0.5) * 2.0;
+            [1.0, 1.0 - t, 1.0 - t]
+        }
     }
 
     fn greyscale(v: f32) -> [f32; 3] {
         [v, v, v]
     }
 
-    const BUCKET_AMOUNT: f32 = 0.25;
-    fn rainbow(v: f32) -> [f32; 3] {
-        let num = (v + Self::BUCKET_AMOUNT).floor().min(3.0) as f32;
-
-        let s = (v - num * Self::BUCKET_AMOUNT) / Self::BUCKET_AMOUNT;
-
-        let rgb = match num {
-            0.0 => [0.0, s, 1.0],
-            1.0 => [0.0, 1.0, 1.0 - s],
-            2.0 => [s, 1.0, 0.0],
-            3.0 => [1.0, 1.0 - s, 0.0],
-            _ => [0.0, 0.0, 0.0],
+    fn jet(v: f32) -> [f32; 3] {
+        let mut v = v;
+        
+        let c = 
+        if v < 0.25 {
+            [0.0, 4.0 * v, 1.0]
+        } else if v < 0.5 {
+            [0.0, 1.0, 1.0 - 4.0 * (v - 0.25)]
+        } else if v < 0.75 {
+            [4.0 * (v - 0.5), 1.0, 0.0]
+        } else {
+            [1.0, 1.0 - 4.0 * (v - 0.75), 0.0]
         };
 
-        [rgb[0] * 255.0, rgb[1] * 255.0, rgb[2] * 255.0]
+        c.map(|x| x.clamp(0.0, 1.0))
     }
 }
 
@@ -177,6 +180,7 @@ impl MeshRenderer {
         vertices: Vec<Vertex>,
         indices: Vec<u16>,
         lines: Vec<(u32, u32)>,
+        multisample: MultisampleState,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mesh Shader"),
@@ -221,7 +225,7 @@ impl MeshRenderer {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample,
             multiview: None,
         });
 
@@ -255,11 +259,7 @@ impl MeshRenderer {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
+            multisample,
             multiview: None,
         });
 

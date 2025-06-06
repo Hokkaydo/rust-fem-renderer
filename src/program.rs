@@ -3,6 +3,7 @@ use glyphon::{
     fontdb::Database, Cache, FontSystem, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport,
 };
 use winit::event::MouseButton;
+use std::ptr::null;
 use std::sync::Arc;
 use wgpu::{
     CommandEncoderDescriptor, CompositeAlphaMode, DeviceDescriptor, Instance, InstanceDescriptor, MultisampleState, Operations, PresentMode, RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions, SurfaceConfiguration, TextureFormat, TextureUsages, TextureViewDescriptor
@@ -81,6 +82,7 @@ struct WindowState {
     texts: text::Texts,
     mesh_renderer: mesh_renderer::MeshRenderer,
     color_map: usize,
+    multisample: MultisampleState,
     // Make sure that the winit window is last in the struct so that
     // it is dropped after the wgpu surface is dropped, otherwise the
     // program may crash when closed. This is probably a bug in wgpu.
@@ -130,8 +132,14 @@ impl WindowState {
         let viewport = Viewport::new(&device, &cache);
         let mut atlas = TextAtlas::new(&device, &queue, &cache, swapchain_format);
 
+        let multisample = MultisampleState {
+            count: 4, // 4x MSAA
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        };
+
         let text_renderer =
-            TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
+            TextRenderer::new(&mut atlas, &device, multisample.clone(), None);
 
         let mut texts = text::Texts::new();
 
@@ -155,7 +163,7 @@ impl WindowState {
 
         texts.add_text(text);
 
-        let mesh_renderer = mesh_renderer::MeshRenderer::new(&device, &surface_config, vertices, indices, lines);
+        let mesh_renderer = mesh_renderer::MeshRenderer::new(&device, &surface_config, vertices, indices, lines, multisample);
 
         Self {
             device,
@@ -173,6 +181,7 @@ impl WindowState {
             scale: 1.0,
             drag_state: DragState::new(),
             color_map: 0,
+            multisample,
         }
     }
 }
@@ -264,6 +273,7 @@ impl winit::application::ApplicationHandler for Application {
             mesh_renderer,
             scale,
             drag_state,
+            multisample,
             ..
         } = state;
 
@@ -375,23 +385,47 @@ impl winit::application::ApplicationHandler for Application {
                     )
                     .unwrap();
 
+                let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("MSAA Texture"),
+                    size: wgpu::Extent3d {
+                        width: surface_config.width,
+                        height: surface_config.height,
+                        depth_or_array_layers: 1,
+                    },
+                    view_formats: &[],
+                    mip_level_count: 1,
+                    sample_count: multisample.count,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: surface_config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                });
+                
+                let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let frame = surface.get_current_texture().unwrap();
-                let view = frame.texture.create_view(&TextureViewDescriptor::default());
+                let frame_view = frame.texture.create_view(&TextureViewDescriptor::default());
+                let (msaa_view, view) = if multisample.count > 1 {
+                    (&msaa_view, Some(&frame_view))
+                } else {
+                    (&frame_view, None)
+                };
+                    
+                frame.texture.create_view(&TextureViewDescriptor::default());
+
                 let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 
                 let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                     label: None,
                     color_attachments: &[Some(RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
+                        view: &msaa_view,
+                        resolve_target: view,
                         ops: Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
                                 r: 255.0/255.0,
                                 g: 255.0/255.0,
                                 b: 181.0/255.0,
                                 a: 1.0,
-                            }), // Background color
-                            store: wgpu::StoreOp::Store,
+                            }),
+                            store: wgpu::StoreOp::Discard,
                         },
                     })],
                     depth_stencil_attachment: None,
