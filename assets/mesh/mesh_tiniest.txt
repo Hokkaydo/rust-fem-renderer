@@ -1,0 +1,18 @@
+Number of nodes 4 
+     0 :      0      0
+     1 :      0      1
+     2 :      1      0
+     3 :      1      1
+Number of edges 4 
+     0 :      0      1
+     1 :      1      2
+     2 :      2      3
+     3 :      3      1      
+Number of triangles 2
+     0 :      0      2      1
+     1 :      1      2      3
+Number of domains 1
+  Domain :      0 
+  Name : Bottom
+  Number of elements :     2
+     0     1
